@@ -7,7 +7,7 @@ public class Buyer {
     String name;
     List<CartItem> cartItemList;
 
-    public Buyer(int id, List<CartItem> cartItemList, String name) {
+    public Buyer(int id, String name,List<CartItem> cartItemList) {
         this.id = id;
         this.cartItemList = cartItemList;
         this.name = name;

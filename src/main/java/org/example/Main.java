@@ -1,113 +1,65 @@
 package org.example;
 
+import config.ExecutorServiceConfig;
+import model.Buyer;
+import model.CartItem;
+import model.Product;
+import model.SaleResult;
+import store.StoreInventory;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 public class Main {
-    public static void main(String[] args) throws ExecutionException, InterruptedException {
-        Map<String, Integer> initialInventory = new LinkedHashMap<>();
-        initialInventory.put("Bread", 20);
-        initialInventory.put("Milk", 25);
-        initialInventory.put("Eggs", 40);
-        initialInventory.put("Cheese", 15);
-        initialInventory.put("Apples", 50);
-        initialInventory.put("Tomatoes", 35);
+    public static void main(String[] args) {
+        Map<Integer, Product> catalog = new LinkedHashMap<>();
+        catalog.put(1, new Product(1, "apple"));
+        catalog.put(2, new Product(2, "peach"));
 
-        Store store = new Store(initialInventory);
 
-        List<Customer> customers = List.of(
-                new Customer("Customer-1", basket("Bread", 4, "Milk", 2, "Apples", 6), store),
-                new Customer("Customer-2", basket("Bread", 5, "Cheese", 3, "Tomatoes", 4), store),
-                new Customer("Customer-3", basket("Milk", 5, "Eggs", 12), store),
-                new Customer("Customer-4", basket("Eggs", 10, "Apples", 10, "Tomatoes", 5), store),
-                new Customer("Customer-5", basket("Cheese", 5, "Bread", 3), store),
-                new Customer("Customer-6", basket("Milk", 6, "Apples", 8), store),
-                new Customer("Customer-7", basket("Eggs", 15, "Tomatoes", 7), store),
-                new Customer("Customer-8", basket("Bread", 6, "Milk", 4, "Cheese", 4), store),
-                new Customer("Customer-9", basket("Apples", 12, "Tomatoes", 10), store),
-                new Customer("Customer-10", basket("Eggs", 8, "Cheese", 6, "Bread", 7), store)
-        );
+        Map<Integer, Integer> initialStock = new LinkedHashMap<>();
+        initialStock.put(1, 12);
+        initialStock.put(2, 6);
 
-        ExecutorService executor = Executors.newFixedThreadPool(4);
-        List<Future<?>> futures = new ArrayList<>();
+        StoreInventory store = new StoreInventory(catalog, initialStock);
 
-        for (Customer customer : customers) {
-            futures.add(executor.submit(customer));
+
+        List<Buyer> buyers = new ArrayList<>(List.of(
+                new Buyer(1, "Ivan", new ArrayList<>(List.of(new CartItem(1, 2), new CartItem(2, 1)))),
+                new Buyer(2, "Andrei", new ArrayList<>(List.of(new CartItem(1, 5)))),
+                new Buyer(3, "Georgi", new ArrayList<>(List.of(new CartItem(2, 3)))),
+                new Buyer(4, "Dimitar", new ArrayList<>(List.of(new CartItem(1, 3), new CartItem(2, 2)))),
+                new Buyer(5, "Ivana", new ArrayList<>(List.of(new CartItem(1, 10)))),
+                new Buyer(6, "Gloriq", new ArrayList<>(List.of(new CartItem(1, 1)))),
+                new Buyer(7, "Vasil", new ArrayList<>(List.of(new CartItem(2, 5)))),
+                new Buyer(8, "Nasko", new ArrayList<>(List.of(new CartItem(1, 1)))),
+                new Buyer(9, "Andrea", new ArrayList<>(List.of(new CartItem(1, 1)))),
+                new Buyer(10, "Raina", new ArrayList<>(List.of(new CartItem(2, 1))))
+        ));
+
+        ExecutorService executor = ExecutorServiceConfig.getExecutorService();
+
+        List<CompletableFuture<SaleResult>> futures = new ArrayList<>();
+
+        for (Buyer buyer : buyers) {
+            CompletableFuture<SaleResult> f = CompletableFuture.supplyAsync(()->{
+                SaleResult sr = null;
+                sr = store.sellAllOrNothing(buyer);
+
+                return sr;
+            }, executor);
+
+            futures.add(f);
         }
 
-        for (Future<?> future : futures) {
-            future.get();
-        }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
         executor.shutdown();
 
-        System.out.println("Final inventory:");
-        for (Map.Entry<String, Integer> entry : store.snapshot().entrySet()) {
-            System.out.printf("- %s: %d%n", entry.getKey(), entry.getValue());
-        }
-    }
 
-    private static Map<String, Integer> basket(Object... items) {
-        Map<String, Integer> basket = new LinkedHashMap<>();
-        for (int i = 0; i < items.length; i += 2) {
-            basket.put((String) items[i], (Integer) items[i + 1]);
-        }
-        return basket;
-    }
-
-    private static final class Store {
-        private final Map<String, Integer> inventory;
-
-        private Store(Map<String, Integer> initialInventory) {
-            this.inventory = new LinkedHashMap<>(initialInventory);
-        }
-
-        public synchronized int sell(String product, int requested) {
-            int available = inventory.getOrDefault(product, 0);
-            int sold = Math.min(available, requested);
-            if (sold > 0) {
-                inventory.put(product, available - sold);
-            }
-            return sold;
-        }
-
-        public Map<String, Integer> snapshot() {
-            synchronized (this) {
-                return new LinkedHashMap<>(inventory);
-            }
-        }
-    }
-
-    private static final class Customer implements Runnable {
-        private final String name;
-        private final Map<String, Integer> basket;
-        private final Store store;
-
-        private Customer(String name, Map<String, Integer> basket, Store store) {
-            this.name = name;
-            this.basket = basket;
-            this.store = store;
-        }
-
-        @Override
-        public void run() {
-            String threadName = Thread.currentThread().getName();
-            for (Map.Entry<String, Integer> entry : basket.entrySet()) {
-                String product = entry.getKey();
-                int requested = entry.getValue();
-                int sold = store.sell(product, requested);
-                if (sold == requested) {
-                    System.out.printf("[%s] %s bought %d of %s%n", threadName, name, sold, product);
-                } else {
-                    System.out.printf("[%s] %s wanted %d of %s, sold %d%n", threadName, name, requested, product, sold);
-                }
-            }
-        }
     }
 }
